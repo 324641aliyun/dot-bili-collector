@@ -14,3 +14,4 @@ Render's Free service sleeps when idle and may take about a minute to wake. Free
 
 Local checks: `python -m unittest test_server.py`. These verify authentication, source restrictions, header sanitation and cookie boundaries. They do not replace cloud end-to-end acceptance.
 
+2026-11-05 (Asia/Tokyo, UTC+09:00): `/frames` uses the same HMAC authentication and downloads only validated video CDN sources to temporary cloud storage. FFmpeg samples at exactly 1 fps, emits 640×360 tiles in 5×5 JPEG sheets, and streams progress / manifest / sheets as NDJSON. Only one decoder runs at a time on the Free instance. Limits: two hours, 768 MiB input, 256 MiB output, ten minutes of decoder time. Temporary files are removed on the cloud service after streaming; the Site stores durable images in R2. Sparse platform storyboards are not used as a substitute when extraction fails.

@@ -2,9 +2,19 @@ import hashlib
 import hmac
 import unittest
 from server import allowed_url, request_headers, valid_signature
+from frames import validate_request, frame_filter
 
 
 class BoundaryTests(unittest.TestCase):
+    def test_frame_requests_are_bounded_video_sources_only(self):
+        validate = lambda u: allowed_url(u, resolve=False)
+        validate_request({'sources': ['https://test.bilivideo.com/a.mp4'], 'duration_seconds': 169}, validate)
+        for value in [{'sources': ['https://i0.hdslb.com/a.jpg'], 'duration_seconds': 169}, {'sources': [], 'duration_seconds': 1}, {'sources': ['https://test.bilivideo.com/a'], 'duration_seconds': 7201}, {'sources': ['https://test.bilivideo.com/a'], 'duration_seconds': float('nan')}]:
+            with self.assertRaises(ValueError):
+                validate_request(value, validate)
+        self.assertIn('fps=1:', frame_filter())
+        self.assertIn('tile=5x5', frame_filter())
+
     def test_only_public_read_sources(self):
         for url in ['https://api.bilibili.com/x/web-interface/nav', 'https://passport.bilibili.com/x/passport-login/web/qrcode/generate', 'https://i0.hdslb.com/a.jpg', 'https://upos.bilivideo.com/video.m4s']:
             allowed_url(url, resolve=False)

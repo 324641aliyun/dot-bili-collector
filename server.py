@@ -84,11 +84,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/health':
-            return self.reply(200, {'ok': bool(os.environ.get('BILI_RELAY_SECRET')), 'service': 'dot-bili-collector', 'version': 1, 'local_machine_dependency': False, 'paid_model_api': False})
+            return self.reply(200, {'ok': bool(os.environ.get('BILI_RELAY_SECRET')), 'service': 'dot-bili-collector', 'version': 2, 'frame_interval_seconds': 1, 'local_machine_dependency': False, 'paid_model_api': False})
         self.reply(404, {'error': 'not_found'})
 
     def do_POST(self):
-        if self.path != '/fetch':
+        if self.path not in ['/fetch', '/frames']:
             return self.reply(404, {'error': 'not_found'})
         try:
             length = int(self.headers.get('Content-Length', '0'))
@@ -98,6 +98,10 @@ class Handler(BaseHTTPRequestHandler):
             if not valid_signature(os.environ.get('BILI_RELAY_SECRET', ''), self.headers.get('X-Bili-Timestamp', ''), self.headers.get('X-Bili-Signature', ''), data):
                 return self.reply(401, {'error': 'unauthorized'})
             value = json.loads(data)
+            if self.path == '/frames':
+                from frames import validate_request
+                validate_request(value, allowed_url)
+                return self.stream_frames(value)
             u = allowed_url(value['url'])
             headers = request_headers(value.get('headers', {}), u.hostname)
             if not SLOTS.acquire(blocking=False):
@@ -141,6 +145,35 @@ class Handler(BaseHTTPRequestHandler):
             if upstream is not None:
                 upstream.close()
             SLOTS.release()
+
+    def stream_frames(self, value):
+        from frames import FRAME_SLOT, extract_sheets, encoded_sheet
+        if not FRAME_SLOT.acquire(blocking=False):
+            return self.reply(503, {'error': 'frame_collector_busy'})
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/x-ndjson')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.close_connection = True
+            def send(value):
+                self.wfile.write(json.dumps(value, separators=(',', ':')).encode() + b'\n')
+                self.wfile.flush()
+            try:
+                send({'type': 'progress', 'stage': 'starting', 'interval_seconds': 1})
+                with requests.Session(impersonate='chrome', trust_env=False) as session:
+                    with extract_sheets(value, session, send) as (manifest, sheets):
+                        send(manifest)
+                        for index, path in enumerate(sheets):
+                            send(encoded_sheet(index, path))
+                        send({'type': 'done'})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception:
+                send({'type': 'error', 'message': '云端每秒截帧失败或超过处理预算；没有用稀疏缩略图冒充每秒截图。'})
+        finally:
+            FRAME_SLOT.release()
 
 
 if __name__ == '__main__':
