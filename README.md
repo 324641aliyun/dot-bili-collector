@@ -19,3 +19,5 @@ Local checks: `python -m unittest test_server.py`. These verify authentication, 
 
 更新：2026-11-05（Asia/Tokyo，UTC+09:00）。/frames继续每秒截一张，改为960×540、3×3、JPEG q=2。/frame复用同一HMAC鉴权与单任务解码限流，接收sources、duration_seconds、整数second，直接从原视频准确定位输出1920×1080 RGB无损PNG；源不足时返回422及实际分辨率，禁止向上放大。下载、ffprobe与FFmpeg有大小和超时限制，仅允许已验证的官方公开视频CDN，临时文件仅在云端并随请求清理。/health版本为3。
 
+
+2026-11-05（Asia/Tokyo，UTC+09:00）：版本4支持请求 progressive=true。先发预期manifest，每幅完整JPEG原子写入后立即发送sheet，最后coverage报告实际帧数，再发done。每格直接印入源时间戳，仍为960×540、3×3。没有progressive参数的旧调用保留原协议。Docker安装DejaVu字体供FFmpeg drawtext使用。本站任务先处理所有分P拼图，字幕只读B站CC，无CC直接跳过，不加载模型。

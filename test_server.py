@@ -15,6 +15,8 @@ class BoundaryTests(unittest.TestCase):
         self.assertIn('fps=1:', frame_filter())
         self.assertIn('tile=3x3', frame_filter())
         self.assertIn('scale=960:540', frame_filter())
+        self.assertIn('drawtext=', frame_filter())
+        self.assertIn('trim=end_frame=10', frame_filter(9.5))
 
     def test_single_frame_second_is_strictly_bounded(self):
         validate = lambda u: allowed_url(u, resolve=False)

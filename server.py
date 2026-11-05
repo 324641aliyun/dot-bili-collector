@@ -84,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/health':
-            return self.reply(200, {'ok': bool(os.environ.get('BILI_RELAY_SECRET')), 'service': 'dot-bili-collector', 'version': 3, 'frame_interval_seconds': 1, 'thumbnail_width': 960, 'thumbnail_height': 540, 'original_frame': {'width': 1920, 'height': 1080, 'format': 'png', 'upscale': False}, 'local_machine_dependency': False, 'paid_model_api': False})
+            return self.reply(200, {'ok': bool(os.environ.get('BILI_RELAY_SECRET')), 'service': 'dot-bili-collector', 'version': 4, 'progressive_sheets': True, 'timestamps_burned_in': True, 'frame_interval_seconds': 1, 'thumbnail_width': 960, 'thumbnail_height': 540, 'original_frame': {'width': 1920, 'height': 1080, 'format': 'png', 'upscale': False}, 'local_machine_dependency': False, 'paid_model_api': False})
         self.reply(404, {'error': 'not_found'})
 
     def do_POST(self):
@@ -161,7 +161,7 @@ class Handler(BaseHTTPRequestHandler):
             FRAME_SLOT.release()
 
     def stream_frames(self, value):
-        from frames import FRAME_SLOT, extract_sheets, encoded_sheet
+        from frames import FRAME_SLOT, extract_sheets, encoded_sheet, stream_sheets
         if not FRAME_SLOT.acquire(blocking=False):
             return self.reply(503, {'error': 'frame_collector_busy'})
         try:
@@ -177,6 +177,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 send({'type': 'progress', 'stage': 'starting', 'interval_seconds': 1})
                 with requests.Session(impersonate='chrome', trust_env=False) as session:
+                    if value.get('progressive') is True:
+                        stream_sheets(value, session, send)
+                        return
                     with extract_sheets(value, session, send) as (manifest, sheets):
                         send(manifest)
                         for index, path in enumerate(sheets):

@@ -32,10 +32,14 @@ def validate_request(value, validate_url, single=False):
             raise ValueError('invalid_frame_second')
 
 
-def frame_filter():
+def frame_filter(duration=None):
     return ('fps=1:start_time=0:round=up:eof_action=pass,'
+            + (f'trim=end_frame={math.ceil(duration)},' if duration is not None else '') +
             f'scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=decrease,'
-            f'pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1,showinfo,'
+            f'pad={WIDTH}:{HEIGHT}:(ow-iw)/2:(oh-ih)/2,setsar=1,'
+            "drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf:"
+            "text='%{pts\\:hms}':x=18:y=h-th-18:fontsize=30:fontcolor=white:"
+            'box=1:boxcolor=black@0.75:boxborderw=8,showinfo,'
             f'tile={COLUMNS}x{ROWS}')
 
 
@@ -128,3 +132,61 @@ def extract_sheets(value, session, progress):
 
 def encoded_sheet(index, path):
     return {'type': 'sheet', 'index': index, 'data': base64.b64encode(path.read_bytes()).decode('ascii')}
+
+
+def stream_sheets(value, session, send):
+    """Publish each complete JPEG before the remaining video finishes decoding."""
+    expected = math.ceil(value['duration_seconds'])
+    manifest = {'type': 'manifest', 'interval_seconds': 1, 'frame_count': expected,
+                'sheet_count': math.ceil(expected / 9), 'tile_width': WIDTH,
+                'tile_height': HEIGHT, 'columns': COLUMNS, 'rows': ROWS,
+                'progressive': True, 'timestamps_burned_in': True}
+    with tempfile.TemporaryDirectory(prefix='dot-bili-progressive-') as directory:
+        root = Path(directory)
+        input_args = prepare_video(value, session, root, send)
+        send(manifest)
+        command = ['ffmpeg', '-nostdin', '-hide_banner', '-loglevel', 'info', '-threads', '1',
+                   '-filter_threads', '1', '-protocol_whitelist', 'file,pipe', *input_args,
+                   '-map', '0:v:0', '-an', '-sn', '-dn', '-vf', frame_filter(value['duration_seconds']),
+                   '-fps_mode', 'passthrough', '-c:v', 'mjpeg', '-q:v', '2', '-threads', '1',
+                   '-atomic_writing', '1', str(root / 'sheet-%04d.jpg')]
+        count = [0]
+        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors='replace')
+        def consume_log():
+            for line in process.stderr:
+                match = re.search(r'Parsed_showinfo.*\bn:\s*(\d+)', line)
+                if match:
+                    count[0] = max(count[0], int(match[1]) + 1)
+        reader = threading.Thread(target=consume_log, daemon=True)
+        reader.start()
+        started, last_progress, index, total = time.monotonic(), 0, 0, 0
+        def flush_sheets():
+            nonlocal index, total
+            # image2 atomic_writing renames only fully closed JPEGs.
+            while (path := root / f'sheet-{index + 1:04d}.jpg').is_file():
+                size = path.stat().st_size
+                total += size
+                if not 0 < size <= 6 * 1024 * 1024 or total > MAX_SHEETS_BYTES or index >= manifest['sheet_count']:
+                    raise ValueError('frame_images_exceed_budget')
+                send(encoded_sheet(index, path))
+                index += 1
+        try:
+            while process.poll() is None:
+                flush_sheets()
+                if time.monotonic() - started > 600:
+                    raise TimeoutError('cloud_frame_extraction_timeout')
+                if time.monotonic() - last_progress > 5:
+                    send({'type': 'progress', 'stage': 'extracting', 'frames': count[0]})
+                    last_progress = time.monotonic()
+                time.sleep(0.1)
+            reader.join(timeout=2)
+            flush_sheets()
+            if process.returncode != 0 or not max(1, expected - 2) <= count[0] <= expected or index != math.ceil(count[0] / 9):
+                raise ValueError('cloud_frame_extraction_failed')
+            send({**manifest, 'type': 'coverage', 'frame_count': count[0], 'sheet_count': index})
+            send({'type': 'done'})
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            process.stderr.close()
