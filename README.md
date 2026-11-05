@@ -15,3 +15,7 @@ Render's Free service sleeps when idle and may take about a minute to wake. Free
 Local checks: `python -m unittest test_server.py`. These verify authentication, source restrictions, header sanitation and cookie boundaries. They do not replace cloud end-to-end acceptance.
 
 2026-11-05 (Asia/Tokyo, UTC+09:00): `/frames` uses the same HMAC authentication and downloads only validated video CDN sources to temporary cloud storage. FFmpeg samples at exactly 1 fps, emits 640×360 tiles in 5×5 JPEG sheets, and streams progress / manifest / sheets as NDJSON. Only one decoder runs at a time on the Free instance. Limits: two hours, 768 MiB input, 256 MiB output, ten minutes of decoder time. Temporary files are removed on the cloud service after streaming; the Site stores durable images in R2. Sparse platform storyboards are not used as a substitute when extraction fails.
+# 高清画面接口更新
+
+更新：2026-11-05（Asia/Tokyo，UTC+09:00）。/frames继续每秒截一张，改为960×540、3×3、JPEG q=2。/frame复用同一HMAC鉴权与单任务解码限流，接收sources、duration_seconds、整数second，直接从原视频准确定位输出1920×1080 RGB无损PNG；源不足时返回422及实际分辨率，禁止向上放大。下载、ffprobe与FFmpeg有大小和超时限制，仅允许已验证的官方公开视频CDN，临时文件仅在云端并随请求清理。/health版本为3。
+

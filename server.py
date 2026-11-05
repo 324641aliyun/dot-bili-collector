@@ -84,11 +84,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/health':
-            return self.reply(200, {'ok': bool(os.environ.get('BILI_RELAY_SECRET')), 'service': 'dot-bili-collector', 'version': 2, 'frame_interval_seconds': 1, 'local_machine_dependency': False, 'paid_model_api': False})
+            return self.reply(200, {'ok': bool(os.environ.get('BILI_RELAY_SECRET')), 'service': 'dot-bili-collector', 'version': 3, 'frame_interval_seconds': 1, 'thumbnail_width': 960, 'thumbnail_height': 540, 'original_frame': {'width': 1920, 'height': 1080, 'format': 'png', 'upscale': False}, 'local_machine_dependency': False, 'paid_model_api': False})
         self.reply(404, {'error': 'not_found'})
 
     def do_POST(self):
-        if self.path not in ['/fetch', '/frames']:
+        if self.path not in ['/fetch', '/frames', '/frame']:
             return self.reply(404, {'error': 'not_found'})
         try:
             length = int(self.headers.get('Content-Length', '0'))
@@ -98,10 +98,10 @@ class Handler(BaseHTTPRequestHandler):
             if not valid_signature(os.environ.get('BILI_RELAY_SECRET', ''), self.headers.get('X-Bili-Timestamp', ''), self.headers.get('X-Bili-Signature', ''), data):
                 return self.reply(401, {'error': 'unauthorized'})
             value = json.loads(data)
-            if self.path == '/frames':
+            if self.path in ['/frames', '/frame']:
                 from frames import validate_request
-                validate_request(value, allowed_url)
-                return self.stream_frames(value)
+                validate_request(value, allowed_url, single=self.path == '/frame')
+                return self.single_frame(value) if self.path == '/frame' else self.stream_frames(value)
             u = allowed_url(value['url'])
             headers = request_headers(value.get('headers', {}), u.hostname)
             if not SLOTS.acquire(blocking=False):
@@ -145,6 +145,20 @@ class Handler(BaseHTTPRequestHandler):
             if upstream is not None:
                 upstream.close()
             SLOTS.release()
+
+    def single_frame(self, value):
+        from frames import FRAME_SLOT, extract_frame, SourceResolutionError
+        if not FRAME_SLOT.acquire(blocking=False):
+            return self.reply(503, {'error': 'frame_collector_busy', 'retry_after_seconds': 15})
+        try:
+            with requests.Session(impersonate='chrome', trust_env=False) as session:
+                return self.reply(200, extract_frame(value, session))
+        except SourceResolutionError as error:
+            return self.reply(422, {'error': str(error), 'source_width': error.width, 'source_height': error.height})
+        except Exception:
+            return self.reply(502, {'error': 'full_hd_frame_extraction_failed'})
+        finally:
+            FRAME_SLOT.release()
 
     def stream_frames(self, value):
         from frames import FRAME_SLOT, extract_sheets, encoded_sheet

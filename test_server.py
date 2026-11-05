@@ -13,7 +13,16 @@ class BoundaryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_request(value, validate)
         self.assertIn('fps=1:', frame_filter())
-        self.assertIn('tile=5x5', frame_filter())
+        self.assertIn('tile=3x3', frame_filter())
+        self.assertIn('scale=960:540', frame_filter())
+
+    def test_single_frame_second_is_strictly_bounded(self):
+        validate = lambda u: allowed_url(u, resolve=False)
+        valid = {'sources': ['https://test.bilivideo.com/a.mp4'], 'duration_seconds': 169, 'second': 168}
+        validate_request(valid, validate, single=True)
+        for second in [-1, 169, True, 1.5, '1', None]:
+            with self.assertRaises(ValueError):
+                validate_request({**valid, 'second': second}, validate, single=True)
 
     def test_only_public_read_sources(self):
         for url in ['https://api.bilibili.com/x/web-interface/nav', 'https://passport.bilibili.com/x/passport-login/web/qrcode/generate', 'https://i0.hdslb.com/a.jpg', 'https://upos.bilivideo.com/video.m4s']:
